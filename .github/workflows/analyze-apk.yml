@@ -120,16 +120,23 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p reports/generated/native-disassembly
-          symbols='KCP_Create,KCP_Config,KCP_Send,KCP_Recv,KCP_UpdatePeriodic,KCP_Destroy,NSTACKX_DFileClient,NSTACKX_DFileServer,NSTACKX_DFileSendFiles,NSTACKX_DFileSendFilesWithRemotePath,NSTACKX_DMsgClient,NSTACKX_DMsgServer,NSTACKX_DMsgSendData,AesGcmEncrypt,AesGcmDecrypt,EncodeFileDataAckFrame,DecodeFileDataAckFrame,HandleFileDataAckFrame,EncodeFileTransferDoneAckFrame,CreateDMsgAckUnit,NSTACKX_DMsgSendDataWithPeerACK,StartHeartBeatClient,StartHeartBeatServer,UpdateAllTransRetryCount,AddRecordToUnAckInfo,AdjustAckInterval,AdjustClientSendRateByAckDrop,AdjustWlanSendRate,AdjustP2PSendRate'
+          symbols='KCP_Create,KCP_Config,KCP_Send,KCP_Recv,KCP_UpdatePeriodic,KCP_Destroy,NSTACKX_DFileClient,NSTACKX_DFileServer,NSTACKX_DFileSendFiles,NSTACKX_DFileSendFilesWithRemotePath,NSTACKX_DMsgClient,NSTACKX_DMsgServer,NSTACKX_DMsgSendData,NSTACKX_DMsgSendDataWithPeerACK,DMsgSendKcpNegoResponse,SendDataBlock,AesGcmEncrypt,AesGcmDecrypt,CreatNormalDataFrame,CreateRetranDataFrame,WriteBlockFrame,EncodeFileDataAckFrame,DecodeFileDataAckFrame,DecodeFileDataAckFrameUnderSecondVersion,EncodeFileTransferDoneAckFrame,HandleDFileFrame,FileManagerSendFileTask,FileManagerSendRetranList,FileManagerRecvFileTask,DFileTransSendFiles,DFileStartTrans,DFileSenderHandle,DFileReceiverHandle,CreateEncryptDMsgDataUnit,StartHeartBeatClient,StartHeartBeatServer,UpdateAllTransRetryCount,AddRecordToUnAckInfo,AdjustAckInterval,AdjustClientSendRateByAckDrop,AdjustWlanSendRate,AdjustP2PSendRate'
           command -v llvm-objdump
           while IFS= read -r so; do
-            abi="$(basename "$(dirname "$(dirname "$so")")")"
+            abi="$(basename "$(dirname "$so")")"
             base="$(basename "$so")"
             out="reports/generated/native-disassembly/${abi}-${base}.disasm.txt"
-            echo "### $so" > "$out"
-            llvm-objdump --disassemble --demangle --disassemble-symbols="$symbols" "$so" >> "$out" 2>&1 || true
+            case "$abi" in
+              armeabi-v7a) triple_args=(--triple=thumbv7-linux-android) ;;
+              arm64-v8a) triple_args=(--triple=aarch64-linux-android) ;;
+              x86) triple_args=(--triple=i686-linux-android) ;;
+              x86_64) triple_args=(--triple=x86_64-linux-android) ;;
+              *) triple_args=() ;;
+            esac
+            echo "### ABI: $abi | file: $so" > "$out"
+            llvm-objdump "${triple_args[@]}" --disassemble --demangle --disassemble-symbols="$symbols" "$so" >> "$out" 2>&1 || true
             echo "### Defined symbols" >> "$out"
-            readelf -Ws "$so" | grep -E 'KCP_|NSTACKX_D(File|Msg)|AesGcm|Ack|ACK|HeartBeat|Retry|UnAck|SendRate' >> "$out" || true
+            readelf -Ws "$so" | grep -E 'KCP_|NSTACKX_D(File|Msg)|AesGcm|Ack|ACK|HeartBeat|Retry|UnAck|SendRate|FileManager|CreatNormal|WriteBlockFrame|SendDataBlock' >> "$out" || true
           done < <(find decoded/native -type f -name '*.so' | sort)
           find reports/generated/native-disassembly -type f -size +0c -print
 
