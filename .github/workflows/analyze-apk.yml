@@ -20,7 +20,7 @@ jobs:
       - name: Install APK decoding tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y apktool unzip jq file binutils
+          sudo apt-get install -y apktool unzip jq file binutils llvm
 
       - name: Download JADX release
         shell: bash
@@ -115,6 +115,24 @@ jobs:
           done < <(find decoded/native -type f -name '*.so' | sort)
           grep -RniE 'wifi|p2p|nearby|nstackx|socket|bluetooth|discovery|transfer|mdns|bonjour|hotspot|http' reports/generated/native > reports/generated/NATIVE-SEARCH-HITS.txt || true
 
+      - name: Disassemble targeted native transfer and crypto symbols
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p reports/generated/native-disassembly
+          symbols='KCP_Create,KCP_Config,KCP_Send,KCP_Recv,KCP_UpdatePeriodic,KCP_Destroy,NSTACKX_DFileClient,NSTACKX_DFileServer,NSTACKX_DFileSendFiles,NSTACKX_DFileSendFilesWithRemotePath,NSTACKX_DMsgClient,NSTACKX_DMsgServer,NSTACKX_DMsgSendData,AesGcmEncrypt,AesGcmDecrypt,EncodeFileDataAckFrame,DecodeFileDataAckFrame,HandleFileDataAckFrame,EncodeFileTransferDoneAckFrame,CreateDMsgAckUnit,NSTACKX_DMsgSendDataWithPeerACK,StartHeartBeatClient,StartHeartBeatServer,UpdateAllTransRetryCount,AddRecordToUnAckInfo,AdjustAckInterval,AdjustClientSendRateByAckDrop,AdjustWlanSendRate,AdjustP2PSendRate'
+          command -v llvm-objdump
+          while IFS= read -r so; do
+            abi="$(basename "$(dirname "$(dirname "$so")")")"
+            base="$(basename "$so")"
+            out="reports/generated/native-disassembly/${abi}-${base}.disasm.txt"
+            echo "### $so" > "$out"
+            llvm-objdump --disassemble --demangle --disassemble-symbols="$symbols" "$so" >> "$out" 2>&1 || true
+            echo "### Defined symbols" >> "$out"
+            readelf -Ws "$so" | grep -E 'KCP_|NSTACKX_D(File|Msg)|AesGcm|Ack|ACK|HeartBeat|Retry|UnAck|SendRate' >> "$out" || true
+          done < <(find decoded/native -type f -name '*.so' | sort)
+          find reports/generated/native-disassembly -type f -size +0c -print
+
       - name: Package analysis outputs
         run: |
           set -euo pipefail
@@ -123,6 +141,7 @@ jobs:
           cp -r decoded/apktool output/
           cp -r decoded/jadx/sources output/jadx-sources
           cp -r reports/generated/native output/native-analysis
+          cp -r reports/generated/native-disassembly output/native-disassembly
           cd output
           zip -qr ../zapya-analysis-results.zip .
 
