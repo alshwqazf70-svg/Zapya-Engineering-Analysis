@@ -1,0 +1,103 @@
+name: Analyze Zapya APK (private)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private analysis repository
+        uses: actions/checkout@v4
+
+      - name: Install APK decoding tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apktool unzip jq file binutils
+
+      - name: Download JADX release
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="$(curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest)"
+          url="$(printf '%s' "$api" | jq -r '[.assets[] | select(.name | test("^jadx-[0-9].*\\.zip$"))][0].browser_download_url // empty')"
+          test -n "$url"
+          mkdir -p tools
+          curl -fL "$url" -o tools/jadx.zip
+          unzip -q tools/jadx.zip -d tools/jadx
+          JADX="$(find tools/jadx -type f -path '*/bin/jadx' | head -n 1)"
+          test -n "$JADX"
+          chmod +x "$JADX"
+          echo "JADX=$JADX" >> "$GITHUB_ENV"
+
+      - name: Verify original APK and decode manifest/resources
+        run: |
+          set -euo pipefail
+          mkdir -p reports/generated decoded
+          echo "## Artifact verification" > reports/generated/ANALYSIS-REPORT.md
+          sha256sum apk/Zapya.apk | tee reports/generated/ACTUAL-SHA256.txt
+          diff -u inventory/SHA256.txt reports/generated/ACTUAL-SHA256.txt
+          file apk/Zapya.apk >> reports/generated/ANALYSIS-REPORT.md
+          unzip -l apk/Zapya.apk > reports/generated/ARCHIVE-LIST.txt
+          apktool d -f apk/Zapya.apk -o decoded/apktool
+          cp decoded/apktool/AndroidManifest.xml reports/generated/AndroidManifest-decoded.xml
+          {
+            echo
+            echo "## Manifest highlights"
+            grep -Eo 'package="[^"]+"|android:(versionCode|versionName|minSdkVersion|targetSdkVersion)="[^"]+"' reports/generated/AndroidManifest-decoded.xml | sort -u || true
+            echo
+            echo "## Declared components"
+            grep -Eo '<(activity|activity-alias|service|receiver|provider)[^>]*' reports/generated/AndroidManifest-decoded.xml | head -n 250 || true
+            echo
+            echo "## Permissions"
+            grep -Eo '<uses-permission[^>]*' reports/generated/AndroidManifest-decoded.xml | sort -u || true
+          } >> reports/generated/ANALYSIS-REPORT.md
+
+      - name: Decompile DEX files with JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$JADX" --show-bad-code -d decoded/jadx apk/Zapya.apk 2>&1 | tee reports/generated/JADX-LOG.txt
+
+      - name: Extract networking and transfer investigation leads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports/generated
+          {
+            echo "# Code search leads (not conclusions)"
+            echo
+            echo "Search hits are investigation leads; each behavior must be confirmed by tracing callers and runtime behavior."
+            echo
+            grep -RniE 'WifiP2p|WiFiDirect|WifiManager|LocalOnlyHotspot|Bluetooth|NsdManager|MulticastLock|ServerSocket|SocketChannel|DatagramSocket|OkHttp|Retrofit|ForegroundService|startForeground|WorkManager|MD5|SHA-256|CRC32|retry|resume|offset|chunk|nstackx|nearby' decoded/jadx --include='*.java' 2>/dev/null | head -n 2500 > reports/generated/NETWORK-TRANSFER-HITS.txt || true
+            find apk -type f -maxdepth 2 -print
+          } > reports/generated/SEARCH-NOTES.txt
+          {
+            echo
+            echo "## Decompiled code search"
+            echo "See NETWORK-TRANSFER-HITS.txt for keyword matches requiring manual call-graph review."
+            echo
+            echo "## Native library inventory"
+            grep -E 'lib/[^ ]+\\.so' reports/generated/ARCHIVE-LIST.txt | head -n 100 || true
+          } >> reports/generated/ANALYSIS-REPORT.md
+
+      - name: Package analysis outputs
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          cp -r reports/generated output/
+          cp -r decoded/apktool output/
+          cp -r decoded/jadx/sources output/jadx-sources
+          cd output
+          zip -qr ../zapya-analysis-results.zip .
+
+      - name: Upload private analysis artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zapya-analysis-results
+          path: zapya-analysis-results.zip
+          retention-days: 7
