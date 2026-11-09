@@ -2,6 +2,9 @@ name: Analyze Zapya APK (private)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/analyze-apk.yml'
 
 permissions:
   contents: read
@@ -85,6 +88,19 @@ jobs:
             grep -E 'lib/[^ ]+\\.so' reports/generated/ARCHIVE-LIST.txt | head -n 100 || true
           } >> reports/generated/ANALYSIS-REPORT.md
 
+      - name: Inspect native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p decoded/native reports/generated/native
+          unzip -oq apk/Zapya.apk 'lib/*' -d decoded/native
+          while IFS= read -r so; do
+            base="$(basename "$so")"
+            strings -a "$so" > "reports/generated/native/$base.strings.txt"
+            readelf -Ws "$so" > "reports/generated/native/$base.symbols.txt" || true
+          done < <(find decoded/native -type f -name '*.so' | sort)
+          grep -RniE 'wifi|p2p|nearby|nstackx|socket|bluetooth|discovery|transfer|mdns|bonjour|hotspot|http' reports/generated/native > reports/generated/NATIVE-SEARCH-HITS.txt || true
+
       - name: Package analysis outputs
         run: |
           set -euo pipefail
@@ -92,6 +108,7 @@ jobs:
           cp -r reports/generated output/
           cp -r decoded/apktool output/
           cp -r decoded/jadx/sources output/jadx-sources
+          cp -r reports/generated/native output/native-analysis
           cd output
           zip -qr ../zapya-analysis-results.zip .
 
