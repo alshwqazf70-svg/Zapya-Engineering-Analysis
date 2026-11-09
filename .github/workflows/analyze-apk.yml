@@ -63,8 +63,22 @@ jobs:
       - name: Decompile DEX files with JADX
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          mkdir -p decoded/jadx reports/generated
+          set +e
           "$JADX" --show-bad-code -d decoded/jadx apk/Zapya.apk 2>&1 | tee reports/generated/JADX-LOG.txt
+          jadx_status=${PIPESTATUS[0]}
+          set -e
+          source_count="$(find decoded/jadx -type f -name '*.java' 2>/dev/null | wc -l)"
+          echo "JADX exit code: ${jadx_status}" > reports/generated/JADX-STATUS.txt
+          echo "Recovered Java source files: ${source_count}" >> reports/generated/JADX-STATUS.txt
+          if [ "$source_count" -eq 0 ]; then
+            echo "JADX produced no Java sources; cannot continue analysis." >&2
+            exit 1
+          fi
+          if [ "$jadx_status" -ne 0 ]; then
+            echo "JADX reported recoverable decompilation errors; continuing with recovered sources." | tee -a reports/generated/JADX-STATUS.txt
+          fi
 
       - name: Extract networking and transfer investigation leads
         shell: bash
