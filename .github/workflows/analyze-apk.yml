@@ -1,4 +1,4 @@
-name: Analyze Zapya APK (private)
+name: Analyze Zapya APK (reproducible deep inspection)
 
 on:
   workflow_dispatch:
@@ -161,4 +161,4 @@ jobs:
         with:
           name: zapya-analysis-results
           path: zapya-analysis-results.zip
-          retention-days: 7
+          retention-days: 30
